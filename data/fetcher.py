@@ -135,7 +135,8 @@ class StockDataFetcher:
                     'title': item.get('title', ''),
                     'summary': item.get('summary', ''),
                     'published': item.get('providerPublishTime'),
-                    'publisher': item.get('publisher', '')
+                    'publisher': item.get('publisher', ''),
+                    'link': item.get('link', '')
                 })
             
             return formatted_news
@@ -143,3 +144,66 @@ class StockDataFetcher:
         except Exception as e:
             logger.error(f"Error fetching news for {symbol}: {str(e)}")
             return []
+    
+    def get_market_context(self) -> Dict:
+        """Get broader market context for geopolitical analysis"""
+        try:
+            # Get major market indices for context
+            indices = {
+                'SPY': 'S&P 500',
+                'QQQ': 'NASDAQ',
+                'DIA': 'Dow Jones',
+                'VIX': 'Volatility Index',
+                'GLD': 'Gold',
+                'TLT': 'Treasury Bonds',
+                'DXY': 'US Dollar Index'
+            }
+            
+            market_data = {}
+            for symbol, name in indices.items():
+                try:
+                    ticker = yf.Ticker(symbol)
+                    hist = ticker.history(period='5d')
+                    if not hist.empty:
+                        current = hist['Close'].iloc[-1]
+                        prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
+                        change_pct = ((current - prev) / prev) * 100
+                        
+                        market_data[symbol] = {
+                            'name': name,
+                            'price': current,
+                            'change_pct': change_pct,
+                            'volatility': hist['Close'].pct_change().std() * (252**0.5)
+                        }
+                except Exception as e:
+                    logger.warning(f"Could not fetch data for {symbol}: {str(e)}")
+            
+            return {
+                'market_indices': market_data,
+                'timestamp': datetime.now().isoformat(),
+                'market_sentiment': self._assess_market_sentiment(market_data)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error fetching market context: {str(e)}")
+            return {}
+    
+    def _assess_market_sentiment(self, market_data: Dict) -> str:
+        """Assess overall market sentiment from indices"""
+        try:
+            if not market_data:
+                return 'NEUTRAL'
+            
+            # Simple sentiment based on major indices
+            spy_change = market_data.get('SPY', {}).get('change_pct', 0)
+            vix_change = market_data.get('VIX', {}).get('change_pct', 0)
+            
+            if spy_change > 1 and vix_change < -5:
+                return 'BULLISH'
+            elif spy_change < -1 and vix_change > 5:
+                return 'BEARISH'
+            else:
+                return 'NEUTRAL'
+                
+        except Exception:
+            return 'NEUTRAL'

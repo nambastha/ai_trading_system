@@ -37,30 +37,53 @@ class LLMAnalyzer:
 
         {news_summary}
 
-        Provide a JSON response with:
+        Provide a comprehensive JSON response with:
         1. sentiment: "BULLISH", "BEARISH", or "NEUTRAL"
         2. confidence: float between 0 and 1
-        3. reasoning: brief explanation
+        3. reasoning: detailed explanation including geopolitical factors
         4. key_factors: list of main factors influencing sentiment
         5. risk_level: "LOW", "MEDIUM", or "HIGH"
+        6. geopolitical_impact: assessment of geopolitical risks/opportunities
+        7. economic_environment: analysis of broader economic conditions
+        8. sector_outlook: industry-specific trends and challenges
 
-        Consider:
-        - Company fundamentals mentioned in news
-        - Market trends and economic indicators
-        - Industry-specific developments
-        - Regulatory changes
-        - Earnings reports and guidance
+        Consider ALL of the following factors:
+        
+        **Company Fundamentals:**
+        - Earnings reports, guidance, and financial health
+        - Management commentary and strategic initiatives
+        - Competitive positioning and market share
+
+        **Geopolitical Factors:**
+        - Trade tensions, tariffs, and international relations
+        - Regulatory changes and government policies
+        - Currency fluctuations and their impact on operations
+        - Supply chain disruptions from global events
+        - Sanctions, political instability, and regional conflicts
+        - Energy prices and commodity market impacts
+
+        **Economic Environment:**
+        - Interest rate environment and monetary policy
+        - Inflation trends and consumer spending patterns
+        - Employment data and economic growth indicators
+        - Market liquidity and investor sentiment
+
+        **Industry & Sector Analysis:**
+        - Technological disruptions and innovation cycles
+        - Regulatory changes specific to the industry
+        - Competitive landscape and market dynamics
+        - ESG considerations and sustainability trends
         """
         
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are an expert financial analyst. Provide objective, data-driven analysis."},
+                    {"role": "system", "content": "You are a senior geopolitical and financial analyst with expertise in global markets, international relations, and macroeconomic trends. Provide comprehensive, nuanced analysis that considers both financial and geopolitical factors."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                max_tokens=500
+                temperature=0.2,
+                max_tokens=800
             )
             
             result = json.loads(response.choices[0].message.content)
@@ -154,6 +177,9 @@ class LLMAnalyzer:
         - Sentiment: {sentiment_analysis.get('sentiment', 'N/A')}
         - Confidence: {sentiment_analysis.get('confidence', 0)}
         - Key Factors: {sentiment_analysis.get('key_factors', [])}
+        - Geopolitical Impact: {sentiment_analysis.get('geopolitical_impact', 'N/A')}
+        - Economic Environment: {sentiment_analysis.get('economic_environment', 'N/A')}
+        - Sector Outlook: {sentiment_analysis.get('sector_outlook', 'N/A')}
 
         TECHNICAL ANALYSIS:
         - Signal: {technical_analysis.get('signal', 'N/A')}
@@ -166,30 +192,47 @@ class LLMAnalyzer:
         - Beta: {market_info.get('beta', 'N/A')}
         - 52W High: ${market_info.get('52_week_high', 'N/A')}
         - 52W Low: ${market_info.get('52_week_low', 'N/A')}
+        - Sector: {market_info.get('sector', 'N/A')}
+        - Market Cap: {market_info.get('market_cap', 'N/A')}
 
-        Provide a JSON response with:
+        As a senior portfolio manager with expertise in geopolitical risk assessment, provide a JSON response with:
+        
         1. final_recommendation: "STRONG_BUY", "BUY", "HOLD", "SELL", or "STRONG_SELL"
         2. overall_confidence: float between 0 and 1
-        3. reasoning: comprehensive explanation
+        3. reasoning: comprehensive explanation integrating all factors
         4. risk_assessment: "LOW", "MEDIUM", or "HIGH"
         5. time_horizon: "SHORT_TERM", "MEDIUM_TERM", or "LONG_TERM"
         6. entry_price: recommended entry price
         7. stop_loss: recommended stop loss
         8. take_profit: recommended take profit levels
         9. position_size: recommended position size as percentage of portfolio
-        10. key_risks: list of main risks
+        10. key_risks: list of main risks including geopolitical
         11. catalysts: potential positive catalysts
+        12. geopolitical_considerations: specific geopolitical factors affecting this stock
+        13. macroeconomic_factors: broader economic trends impacting the investment
+        14. sector_specific_risks: industry-related risks and opportunities
+        15. currency_exposure: impact of currency fluctuations if applicable
+        16. regulatory_environment: current and potential regulatory changes
+        17. supply_chain_risks: geopolitical supply chain considerations
+
+        Consider the current global environment including:
+        - US-China trade relations and technology tensions
+        - European energy security and Russia-Ukraine conflict impacts
+        - Middle East geopolitical stability and oil markets
+        - Central bank policies and interest rate environments
+        - Inflation trends and currency volatility
+        - Emerging market stability and capital flows
         """
         
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a senior portfolio manager with 20+ years of experience. Provide balanced, risk-aware recommendations."},
+                    {"role": "system", "content": "You are a senior portfolio manager and geopolitical risk analyst with 20+ years of experience in global markets. Provide comprehensive, balanced recommendations that integrate financial analysis with geopolitical and macroeconomic considerations."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,
-                max_tokens=800
+                max_tokens=1200
             )
             
             result = json.loads(response.choices[0].message.content)

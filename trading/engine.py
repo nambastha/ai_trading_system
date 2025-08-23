@@ -2,9 +2,9 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 import pandas as pd
-from data_fetcher import StockDataFetcher
-from markov_analyzer import MarkovChainAnalyzer
-from llm_analyzer import LLMAnalyzer
+from data.fetcher import StockDataFetcher
+from analyzers.markov import MarkovChainAnalyzer
+from analyzers.llm import LLMAnalyzer
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,9 @@ class TradingEngine:
             
             # 3. Get news for sentiment analysis
             news_data = self.data_fetcher.get_news_sentiment(symbol)
+            
+            # 4. Get broader market context for geopolitical analysis
+            market_context = self.data_fetcher.get_market_context()
             
             # 4. Markov Chain Analysis
             logger.info(f"Running Markov chain analysis for {symbol}")

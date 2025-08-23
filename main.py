@@ -13,10 +13,10 @@ from typing import List
 import json
 
 from config import Config
-from trading_engine import TradingEngine
-from alert_system import AlertSystem
-from portfolio_tracker import PortfolioTracker
-from data_fetcher import StockDataFetcher
+from trading.engine import TradingEngine
+from utils.alerts import AlertSystem
+from trading.portfolio import PortfolioTracker
+from data.fetcher import StockDataFetcher
 
 # Configure logging
 logging.basicConfig(
