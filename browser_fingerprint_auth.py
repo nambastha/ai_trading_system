@@ -2,122 +2,98 @@ import streamlit as st
 import json
 import os
 import time
+import secrets
 import hashlib
+import requests
 from datetime import datetime
-import streamlit.components.v1 as components
 
 # Configuration
 SESSION_TIMEOUT_HOURS = 1
-SESSIONS_DIR = "browser_sessions"
+SESSIONS_DIR = "simple_sessions"
 
-# Demo users
-USERS = {
-    "admin": {"password": "admin123", "name": "Admin User"},
-    "user1": {"password": "user123", "name": "John Doe"}, 
-    "demo": {"password": "demo123", "name": "Demo User"}
-}
+# SSO Server Configuration
+SSO_SERVER_URL = "http://localhost:5000"
 
 def init_storage():
     """Initialize session storage"""
     if not os.path.exists(SESSIONS_DIR):
         os.makedirs(SESSIONS_DIR)
 
-def get_browser_fingerprint():
-    """Get browser fingerprint using JavaScript"""
-    
-    # JavaScript to collect browser information
-    fingerprint_js = """
-    <script>
-    function getBrowserFingerprint() {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        ctx.textBaseline = 'top';
-        ctx.font = '14px Arial';
-        ctx.fillText('Browser fingerprint', 2, 2);
-        
-        const fingerprint = {
-            userAgent: navigator.userAgent,
-            language: navigator.language,
-            platform: navigator.platform,
-            cookieEnabled: navigator.cookieEnabled,
-            screenResolution: screen.width + 'x' + screen.height,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            canvas: canvas.toDataURL()
-        };
-        
-        const fingerprintString = JSON.stringify(fingerprint);
-        const hash = btoa(fingerprintString).substring(0, 32);
-        
-        // Store in sessionStorage for persistence across refreshes
-        sessionStorage.setItem('browserFingerprint', hash);
-        
-        // Send to Streamlit
-        window.parent.postMessage({
-            type: 'streamlit:fingerprint',
-            fingerprint: hash
-        }, '*');
-        
-        return hash;
-    }
-    
-    // Check if fingerprint already exists
-    const existingFingerprint = sessionStorage.getItem('browserFingerprint');
-    if (existingFingerprint) {
-        window.parent.postMessage({
-            type: 'streamlit:fingerprint',
-            fingerprint: existingFingerprint
-        }, '*');
-    } else {
-        getBrowserFingerprint();
-    }
-    </script>
-    """
-    
-    # Render the JavaScript
-    components.html(fingerprint_js, height=0)
-    
-    # Check if we have fingerprint in session state
-    if 'browser_fingerprint' in st.session_state:
-        return st.session_state.browser_fingerprint
-    
-    # Fallback fingerprint using available Streamlit info
-    fallback_data = f"streamlit_session_{id(st.session_state)}"
-    fallback_hash = hashlib.md5(fallback_data.encode()).hexdigest()[:16]
-    
-    return fallback_hash
+def get_browser_id():
+    """Simple browser identification using headers"""
+    try:
+        # Try to get some browser info from streamlit context
+        user_agent = st.context.headers.get("User-Agent", "unknown")
+        # Create a simple hash from user agent
+        browser_hash = hashlib.md5(user_agent.encode()).hexdigest()[:16]
+        return f"browser_{browser_hash}"
+    except:
+        # Fallback - use session state with persistence
+        if 'browser_id' not in st.session_state:
+            st.session_state.browser_id = f"browser_{secrets.token_hex(8)}"
+        return st.session_state.browser_id
 
-def create_user_session(username, browser_fingerprint):
-    """Create new user session"""
+def get_session_token():
+    """Get session token from URL or create new one"""
+    # Check URL parameters first
+    query_params = st.query_params
+    
+    if 'token' in query_params:
+        token = query_params['token']
+        # Store in session state for persistence
+        st.session_state.session_token = token
+        return token
+    
+    # Check session state
+    if 'session_token' in st.session_state:
+        token = st.session_state.session_token
+        # Make sure it's in URL too
+        st.query_params['token'] = token
+        return token
+    
+    # Create new token
+    token = secrets.token_urlsafe(32)
+    st.session_state.session_token = token
+    st.query_params['token'] = token
+    return token
+
+def create_user_session(user_info):
+    """Create user session with SSO user info"""
     init_storage()
     
+    token = get_session_token()
+    browser_id = get_browser_id()
+    
     session_data = {
-        "username": username,
-        "name": USERS[username]["name"],
-        "browser_fingerprint": browser_fingerprint,
+        "username": user_info.get("email", user_info.get("user_id")),
+        "name": user_info.get("name", "Unknown User"),
+        "email": user_info.get("email"),
+        "role": user_info.get("role", "user"),
+        "user_id": user_info.get("user_id"),
+        "token": token,
+        "browser_id": browser_id,
         "created_at": time.time(),
         "expires_at": time.time() + (SESSION_TIMEOUT_HOURS * 3600),
         "last_activity": time.time()
     }
     
-    # Save session using browser fingerprint as filename
-    session_file = f"{SESSIONS_DIR}/{browser_fingerprint}.json"
+    # Save session using token as filename
+    session_file = f"{SESSIONS_DIR}/{token}.json"
     with open(session_file, 'w') as f:
         json.dump(session_data, f)
     
-    # Update session state
+    # Set session state
     st.session_state.logged_in = True
-    st.session_state.username = username
-    st.session_state.user_name = USERS[username]["name"]
-    st.session_state.browser_fingerprint = browser_fingerprint
+    st.session_state.username = session_data["username"]
+    st.session_state.user_name = session_data["name"]
+    st.session_state.user_info = user_info
 
 def validate_session():
     """Validate current session"""
-    browser_fingerprint = get_browser_fingerprint()
+    token = get_session_token()
+    browser_id = get_browser_id()
     
-    if not browser_fingerprint:
-        return False
-    
-    session_file = f"{SESSIONS_DIR}/{browser_fingerprint}.json"
+    session_file = f"{SESSIONS_DIR}/{token}.json"
     
     # Check if session file exists
     if not os.path.exists(session_file):
@@ -127,16 +103,27 @@ def validate_session():
         with open(session_file, 'r') as f:
             session_data = json.load(f)
         
-        # Check expiration
-        if time.time() > session_data.get("expires_at", 0):
-            cleanup_session(browser_fingerprint)
+        # Check if browser ID matches (basic security)
+        stored_browser_id = session_data.get("browser_id")
+        if stored_browser_id and stored_browser_id != browser_id:
+            # Different browser - reject silently and create new session
+            cleanup_session(token)
             return False
         
-        # Restore session state
+        # Check expiration
+        if time.time() > session_data.get("expires_at", 0):
+            cleanup_session(token)
+            return False
+        
+        # Valid session - restore state
         st.session_state.logged_in = True
         st.session_state.username = session_data["username"]
         st.session_state.user_name = session_data["name"]
-        st.session_state.browser_fingerprint = browser_fingerprint
+        st.session_state.user_info = {
+            "email": session_data.get("email"),
+            "role": session_data.get("role"),
+            "user_id": session_data.get("user_id")
+        }
         
         # Update last activity
         session_data["last_activity"] = time.time()
@@ -148,181 +135,272 @@ def validate_session():
     except (json.JSONDecodeError, FileNotFoundError):
         return False
 
-def cleanup_session(browser_fingerprint):
+def cleanup_session(token):
     """Remove session file"""
-    session_file = f"{SESSIONS_DIR}/{browser_fingerprint}.json"
+    session_file = f"{SESSIONS_DIR}/{token}.json"
     if os.path.exists(session_file):
         os.remove(session_file)
 
 def logout_user():
     """Logout user"""
-    if 'browser_fingerprint' in st.session_state:
-        cleanup_session(st.session_state.browser_fingerprint)
+    token = get_session_token()
+    cleanup_session(token)
     
-    # Clear session state
-    for key in ['logged_in', 'username', 'user_name']:
+    # Clear everything
+    if 'token' in st.query_params:
+        del st.query_params['token']
+    
+    for key in ['logged_in', 'username', 'user_name', 'user_info', 'session_token', 'browser_id']:
         if key in st.session_state:
             del st.session_state[key]
 
+def check_sso_server():
+    """Check if SSO server is running"""
+    try:
+        response = requests.get(f"{SSO_SERVER_URL}/health", timeout=2)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+def handle_sso_login():
+    """Handle SSO login flow"""
+    query_params = st.query_params
+    
+    # Check for OAuth callback
+    if 'code' in query_params and 'state' in query_params:
+        auth_code = query_params.get('code')
+        state = query_params.get('state')
+        
+        # Verify state
+        if state != st.session_state.get('oauth_state'):
+            st.error("Invalid OAuth state")
+            return None
+        
+        try:
+            # Exchange code for token
+            token_response = requests.post(
+                f"{SSO_SERVER_URL}/oauth/token",
+                data={
+                    'code': auth_code,
+                    'client_id': 'streamlit_app',
+                    'grant_type': 'authorization_code'
+                },
+                timeout=10
+            )
+            
+            if token_response.status_code != 200:
+                st.error("Failed to get access token")
+                return None
+            
+            token_data = token_response.json()
+            access_token = token_data.get('access_token')
+            
+            # Get user info
+            user_response = requests.get(
+                f"{SSO_SERVER_URL}/oauth/userinfo",
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=10
+            )
+            
+            if user_response.status_code != 200:
+                st.error("Failed to get user info")
+                return None
+            
+            user_info = user_response.json()
+            
+            # Clear OAuth params
+            del st.query_params['code']
+            del st.query_params['state']
+            
+            return user_info
+            
+        except requests.RequestException as e:
+            st.error(f"SSO error: {str(e)}")
+            return None
+    
+    return None
+
 def show_login_page():
-    """Display login form"""
-    st.title("🔐 Browser Fingerprint Authentication")
-    st.markdown("*Uses browser characteristics for session persistence*")
+    """Show SSO login page"""
+    st.title("🔐 SSO Authentication")
+    st.markdown("*Secure login with local SSO server*")
     st.markdown("---")
     
-    # Get browser fingerprint
-    browser_fingerprint = get_browser_fingerprint()
+    # Check for SSO callback
+    user_info = handle_sso_login()
+    if user_info:
+        create_user_session(user_info)
+        st.success(f"Welcome {user_info['name']}!")
+        st.rerun()
     
-    # Show fingerprint info
-    with st.expander("🔍 Browser Fingerprint Info"):
-        st.code(f"Fingerprint: {browser_fingerprint}")
-        st.info("This unique ID is generated from your browser characteristics")
+    # Check SSO server status
+    if not check_sso_server():
+        st.error("❌ SSO Server not running!")
+        st.markdown("### 🚀 Start SSO Server")
+        st.code("python local_sso_server.py")
+        st.info("The SSO server must be running on http://localhost:5000")
+        return
     
+    st.success("✅ SSO Server is running")
+    
+    # Show login button
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        with st.form("login_form"):
-            st.subheader("Login")
-            
-            username = st.selectbox("Username", list(USERS.keys()))
-            password = st.text_input("Password", type="password", 
-                                   placeholder=f"Try: {USERS[username]['password']}")
-            
-            submit = st.form_submit_button("🔓 Login", use_container_width=True)
-            
-            if submit:
-                if username in USERS and USERS[username]["password"] == password:
-                    create_user_session(username, browser_fingerprint)
-                    st.success(f"Welcome {USERS[username]['name']}!")
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid credentials!")
+        st.subheader("🔐 Login with SSO")
         
-        # Demo accounts
-        with st.expander("👥 Demo Accounts"):
-            for user, data in USERS.items():
-                st.write(f"• **{user}** / {data['password']} ({data['name']})")
+        if st.button("🚀 Login with Local SSO", use_container_width=True):
+            # Generate OAuth state
+            state = secrets.token_urlsafe(32)
+            st.session_state.oauth_state = state
+            
+            # Build OAuth URL
+            oauth_url = f"{SSO_SERVER_URL}/oauth/authorize"
+            oauth_params = f"?client_id=streamlit_app&redirect_uri=http://localhost:8502&state={state}&response_type=code"
+            
+            full_oauth_url = oauth_url + oauth_params
+            
+            # Redirect to SSO
+            st.markdown(f'<meta http-equiv="refresh" content="0;url={full_oauth_url}">', unsafe_allow_html=True)
+            st.info("Redirecting to SSO server...")
+    
+    # Show available accounts
+    with st.expander("👥 Available SSO Accounts"):
+        st.markdown("""
+        **Demo accounts on SSO server:**
+        - **admin** / admin123 (Admin User)
+        - **user1** / user123 (John Doe)
+        - **user2** / user123 (Jane Smith)
+        - **demo** / demo123 (Demo User)
+        """)
+    
+    # Show debug info
+    token = get_session_token()
+    browser_id = get_browser_id()
+    
+    with st.expander("🔧 Debug Info"):
+        st.write(f"**Session Token:** {token[:16]}...")
+        st.write(f"**Browser ID:** {browser_id}")
+        st.write(f"**SSO Server:** {SSO_SERVER_URL}")
+        st.info("Session persists on refresh, blocks URL sharing")
 
 def show_dashboard():
     """Show dashboard"""
     username = st.session_state.username
     user_name = st.session_state.user_name
-    browser_fingerprint = st.session_state.browser_fingerprint
+    user_info = st.session_state.get('user_info', {})
+    token = get_session_token()
     
     # Header
     col1, col2 = st.columns([3, 1])
     with col1:
         st.title(f"👋 Welcome {user_name}!")
-        st.success("🎉 Session persists across browser refreshes!")
+        st.success("🔐 Authenticated via SSO")
     with col2:
         if st.button("🚪 Logout"):
             logout_user()
             st.rerun()
     
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["🏠 Dashboard", "🧪 Test", "🔒 Session"])
+    tab1, tab2, tab3 = st.tabs(["🔄 Test Refresh", "👤 Profile", "🔒 Session Info"])
     
     with tab1:
-        st.markdown("### ✅ Authenticated Dashboard")
-        st.info("This content is protected and only visible to logged-in users!")
+        st.markdown("### 🔄 Session Persistence Test")
         
-        # Test persistence
-        st.markdown("### 🔄 Test Session Persistence")
-        if 'refresh_count' not in st.session_state:
-            st.session_state.refresh_count = 0
+        if 'counter' not in st.session_state:
+            st.session_state.counter = 0
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
-            st.metric("Refresh Count", st.session_state.refresh_count)
-            if st.button("➕ Increment"):
-                st.session_state.refresh_count += 1
-                st.rerun()
+            st.metric("Counter", st.session_state.counter)
         
         with col2:
-            if st.button("🔄 Force Refresh"):
+            if st.button("➕ Add 1"):
+                st.session_state.counter += 1
                 st.rerun()
         
-        st.markdown("**Test Instructions:**")
-        st.markdown("1. Increment the counter above")
-        st.markdown("2. Refresh your browser (F5 or Ctrl+R)")
-        st.markdown("3. Verify you stay logged in and counter persists")
+        with col3:
+            if st.button("🔄 Refresh"):
+                st.rerun()
+        
+        st.markdown("### 📋 Test Instructions")
+        st.markdown("""
+        **✅ Refresh Test:**
+        1. Click "Add 1" to increment counter
+        2. Refresh browser (F5/Ctrl+R)
+        3. You should stay logged in with counter preserved
+        
+        **❌ URL Sharing Test:**
+        1. Copy current URL from address bar
+        2. Open different browser (Chrome→Safari)
+        3. Paste URL - both users will be logged out!
+        """)
     
     with tab2:
-        st.markdown("### 🧪 Browser Fingerprint Test")
+        st.markdown("### 👤 SSO User Profile")
         
-        st.code(f"Your Browser Fingerprint: {browser_fingerprint}")
+        col1, col2 = st.columns(2)
         
-        st.markdown("### 🔒 Security Features")
-        st.markdown("""
-        - **✅ Refresh Persistent**: Sessions survive page reloads
-        - **❌ Cross-Browser**: Won't work in different browsers  
-        - **❌ Incognito**: Won't work in private mode
-        - **❌ Device Sharing**: Different devices = different fingerprints
-        """)
+        with col1:
+            st.write(f"**Name:** {user_name}")
+            st.write(f"**Email:** {user_info.get('email', 'N/A')}")
+            st.write(f"**User ID:** {user_info.get('user_id', 'N/A')}")
         
-        # JavaScript integration
-        st.markdown("### 🛠️ JavaScript Integration")
+        with col2:
+            st.write(f"**Role:** {user_info.get('role', 'user')}")
+            st.write(f"**Username:** {username}")
+            st.write(f"**Provider:** Local SSO")
         
-        # Add message listener for fingerprint updates
-        js_listener = """
-        <script>
-        window.addEventListener('message', function(event) {
-            if (event.data.type === 'streamlit:fingerprint') {
-                console.log('Received fingerprint:', event.data.fingerprint);
-                // Could update Streamlit session state here
-            }
-        });
-        </script>
-        """
-        components.html(js_listener, height=0)
+        # Notes that persist
+        if 'user_notes' not in st.session_state:
+            st.session_state.user_notes = ""
         
-        st.info("JavaScript is collecting browser characteristics for fingerprinting")
+        st.markdown("### 📝 Persistent Notes")
+        notes = st.text_area("Your notes (survive refresh):", 
+                           value=st.session_state.user_notes, height=100)
+        
+        if notes != st.session_state.user_notes:
+            st.session_state.user_notes = notes
+            st.success("Notes saved! Try refreshing...")
     
     with tab3:
-        st.markdown("### 🔒 Session Information")
+        st.markdown("### 🔒 Session Details")
         
-        # Load session data
         try:
-            session_file = f"{SESSIONS_DIR}/{browser_fingerprint}.json"
-            with open(session_file, 'r') as f:
-                session_data = json.load(f)
-            
-            # Display session details
-            login_time = datetime.fromtimestamp(session_data['created_at'])
-            expires_time = datetime.fromtimestamp(session_data['expires_at'])
-            last_activity = datetime.fromtimestamp(session_data['last_activity'])
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(f"**Username:** {session_data['username']}")
-                st.write(f"**Login Time:** {login_time.strftime('%H:%M:%S')}")
-                st.write(f"**Last Activity:** {last_activity.strftime('%H:%M:%S')}")
-            
-            with col2:
-                st.write(f"**Fingerprint:** {browser_fingerprint[:16]}...")
-                st.write(f"**Expires:** {expires_time.strftime('%H:%M:%S')}")
-                remaining = int((session_data['expires_at'] - time.time()) / 60)
-                st.write(f"**Time Left:** {remaining} minutes")
-            
-            # Extend session
-            if st.button("⏰ Extend Session (+1 hour)"):
-                session_data['expires_at'] = time.time() + (SESSION_TIMEOUT_HOURS * 3600)
-                with open(session_file, 'w') as f:
-                    json.dump(session_data, f)
-                st.success("Session extended!")
-                st.rerun()
+            session_file = f"{SESSIONS_DIR}/{token}.json"
+            if os.path.exists(session_file):
+                with open(session_file, 'r') as f:
+                    session_data = json.load(f)
                 
-        except FileNotFoundError:
-            st.error("❌ Session file not found")
-        
-        # Active sessions count
-        if os.path.exists(SESSIONS_DIR):
-            session_files = [f for f in os.listdir(SESSIONS_DIR) if f.endswith('.json')]
-            st.metric("Active Sessions", len(session_files))
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    login_time = datetime.fromtimestamp(session_data['created_at'])
+                    st.write(f"**Login Time:** {login_time.strftime('%H:%M:%S')}")
+                    st.write(f"**Email:** {session_data.get('email', 'N/A')}")
+                    st.write(f"**Role:** {session_data.get('role', 'user')}")
+                
+                with col2:
+                    expires_time = datetime.fromtimestamp(session_data['expires_at'])
+                    st.write(f"**Expires:** {expires_time.strftime('%H:%M:%S')}")
+                    remaining = int((session_data['expires_at'] - time.time()) / 60)
+                    st.write(f"**Time Left:** {remaining} minutes")
+                    st.write(f"**Session Token:** {token[:16]}...")
+                
+                # Extend session
+                if st.button("⏰ Extend Session (+1 hour)"):
+                    session_data['expires_at'] = time.time() + (SESSION_TIMEOUT_HOURS * 3600)
+                    with open(session_file, 'w') as f:
+                        json.dump(session_data, f)
+                    st.success("Session extended!")
+                    st.rerun()
+            
+        except (FileNotFoundError, json.JSONDecodeError):
+            st.error("Session file not found")
 
 def cleanup_expired_sessions():
-    """Clean up expired sessions"""
+    """Clean expired sessions"""
     if not os.path.exists(SESSIONS_DIR):
         return
     
@@ -336,24 +414,22 @@ def cleanup_expired_sessions():
                 
                 if current_time > session_data.get("expires_at", 0):
                     os.remove(file_path)
-            except (json.JSONDecodeError, FileNotFoundError):
+            except:
                 try:
                     os.remove(file_path)
-                except FileNotFoundError:
+                except:
                     pass
 
 def main():
-    """Main application"""
+    """Main app"""
     st.set_page_config(
-        page_title="Browser Fingerprint Auth",
-        page_icon="🔍",
+        page_title="SSO Authentication",
+        page_icon="🔐",
         layout="wide"
     )
     
-    # Clean up expired sessions
     cleanup_expired_sessions()
     
-    # Check authentication
     if validate_session():
         show_dashboard()
     else:
