@@ -123,17 +123,25 @@ class SensitiveDataIdentifier:
                     'corporate_identity_number', 'corporateidentitynumber',
                     'company_identity_number', 'companyidentitynumber',
                     'corporate_id', 'corporateid', 'company_cin', 'companycin',
-                    'cin_number', 'cinnumber', 'incorporation_number'
+                    'cin_number', 'cinnumber', 'cin_no', 'cinno',
+                    'cin_num', 'cinnum', 'incorporation_number',
+                    'customer_identification_number', 'customeridentificationnumber',
+                    'client_identification_number', 'clientidentificationnumber'
                 ],
                 'patterns': [
-                    r'\bcin\b', r'\bcorporate\s*(identification|identity)\s*number\b',
+                    r'\bcin\b', r'\bcin\s*(number|no|num)\b',
+                    r'\bcorporate\s*(identification|identity)\s*number\b',
                     r'\bcompany\s*(identification|identity)\s*number\b',
+                    r'\bcustomer\s*(identification|identity)\s*number\b',
+                    r'\bclient\s*(identification|identity)\s*number\b',
                     r'\bcorporate\s*id\b', r'\bincorporation\s*number\b'
                 ],
                 'description_keywords': [
                     'corporate identification', 'company identification',
                     'corporate identity number', 'company registration',
-                    'incorporation number', 'cin', 'llpin'
+                    'incorporation number', 'cin', 'llpin',
+                    'customer identification number', 'client identification number',
+                    'identification number', 'entity identification'
                 ]
             },
             'gcin': {
